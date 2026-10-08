@@ -1,7 +1,8 @@
 param([switch]$NoBrowser)
 $ErrorActionPreference = 'Stop'
 $mytabsBase = $PSScriptRoot
-$mytabsUrl = 'http://127.0.0.1:47777'
+$mytabsUrl = 'http://localhost:47777'
+$mytabsHealthUrl = 'http://127.0.0.1:47777'
 $mytabsData = Join-Path $mytabsBase 'data'
 $mytabsExe = Join-Path $mytabsBase 'akustik-mytabs.exe'
 $mytabsInstanceFile = Join-Path $mytabsData 'sunucu.json'
@@ -18,7 +19,7 @@ function Test-MyTabs {
         if (-not $listener) { return $false }
         $owner = Get-Process -Id $listener[0].OwningProcess -ErrorAction SilentlyContinue
         if (-not $owner -or $owner.Path -ne $mytabsExe) { return $false }
-        $result = Invoke-WebRequest -Uri "$mytabsUrl/api/is-finish-setup" -UseBasicParsing -TimeoutSec 2
+        $result = Invoke-WebRequest -Uri "$mytabsHealthUrl/api/is-finish-setup" -UseBasicParsing -TimeoutSec 2
         return $result.StatusCode -eq 200 -and $result.Content -match '^(true|false)$'
     } catch { return $false }
 }

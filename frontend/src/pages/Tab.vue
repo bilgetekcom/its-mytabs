@@ -27,6 +27,48 @@ const { ScrollMode, StaveProfile } = alphaTab;
 const speedActionBuffer = new ActionBuffer(1000);
 const syncOffsetYoutubeActionBuffer = new ActionBuffer(200);
 const syncOffsetAudioActionBuffer = new ActionBuffer(200);
+let youtubeApiLoadingPromise;
+
+function loadYoutubeIframeApi() {
+    if (window.YT?.Player) {
+        return Promise.resolve();
+    }
+    if (youtubeApiLoadingPromise) {
+        return youtubeApiLoadingPromise;
+    }
+
+    youtubeApiLoadingPromise = new Promise((resolve, reject) => {
+        const script = document.createElement("script");
+        let settled = false;
+        const previousReady = window.onYouTubeIframeAPIReady;
+        const timeout = window.setTimeout(() => finish(new Error("YouTube API zamanında yüklenemedi.")), 20000);
+        const finish = (error) => {
+            if (settled) return;
+            settled = true;
+            window.clearTimeout(timeout);
+            if (window.onYouTubeIframeAPIReady === readyCallback) {
+                window.onYouTubeIframeAPIReady = previousReady;
+            }
+            youtubeApiLoadingPromise = undefined;
+            if (error) reject(error);
+            else resolve();
+        };
+        const readyCallback = () => {
+            try {
+                previousReady?.();
+            } finally {
+                finish();
+            }
+        };
+
+        window.onYouTubeIframeAPIReady = readyCallback;
+        script.src = "https://www.youtube.com/iframe_api";
+        script.onerror = () => finish(new Error("YouTube API yüklenemedi."));
+        document.head.appendChild(script);
+    });
+
+    return youtubeApiLoadingPromise;
+}
 
 export default defineComponent({
     /**
@@ -71,6 +113,15 @@ export default defineComponent({
             soloTrackID: -1,
             muteTrackList: {},
             currentAudio: "synth",
+            youtubePlayerReady: false,
+            youtubePlayerPromise: null,
+            youtubePlayerCancel: null,
+            youtubeVideoID: null,
+            youtubeRequestID: 0,
+            youtubePlayerLifecycle: 0,
+            youtubeError: null,
+            youtubeWarningTimeout: undefined,
+            youtubePlaybackInterval: undefined,
             youtubeList: [],
             audioList: [],
             audio: {},
@@ -140,6 +191,24 @@ export default defineComponent({
 
         soundFontLabel() {
             return this.soundFontBank === "sonivox" ? "Sonivox" : "GeneralUser GS";
+        },
+
+        youtubePlaybackFailed() {
+            return !!this.youtubeError && this.currentAudio === `youtube-${this.youtubeError.videoID}`;
+        },
+
+        youtubeLoading() {
+            return this.currentAudio.startsWith("youtube-") &&
+                (this.isInitializingAudio || !this.youtubePlayerReady) && !this.youtubePlaybackFailed;
+        },
+
+        youtubeLocalhostHref() {
+            if (window.location.hostname !== "127.0.0.1") return null;
+            const localUrl = new URL(window.location.href);
+            localUrl.hostname = "localhost";
+            localUrl.searchParams.set("audio", this.currentAudio);
+            localUrl.searchParams.set("track", String(this.selectedTrack));
+            return localUrl.href;
         },
     },
 
@@ -319,6 +388,19 @@ export default defineComponent({
         async currentAudio() {
             console.log("Switching audio to:", this.currentAudio);
 
+            this.youtubeRequestID++;
+            this.isInitializingAudio = false;
+            this.youtubeError = null;
+            this.clearYoutubePlaybackInterval();
+            if (this.currentAudio.startsWith("youtube-")) {
+                this.youtubeVideoID = this.currentAudio.substring(8);
+            } else {
+                this.youtubeVideoID = null;
+                this.youtubePlayer?.pauseVideo?.();
+                window.clearTimeout(this.youtubeWarningTimeout);
+                this.youtubeWarningTimeout = undefined;
+            }
+
             if (!this.api) {
                 return;
             }
@@ -444,6 +526,7 @@ export default defineComponent({
             this._onDocumentClick = undefined;
         }
 
+        this.destroyYoutubePlayer();
         this.socket.disconnect();
     },
     methods: {
@@ -543,7 +626,7 @@ export default defineComponent({
         },
 
         canStartPlayback() {
-            return this.ready && (this.currentAudio !== "synth" || this.synthReady);
+            return this.ready && (this.currentAudio !== "synth" || this.synthReady) && !this.youtubePlaybackFailed && !this.youtubeLoading;
         },
 
         syncSynthReady() {
@@ -1419,205 +1502,299 @@ export default defineComponent({
             this.isInitializingAudio = false;
         },
 
-        async initYoutube(videoID) {
-            this.isInitializingAudio = true;
-            this.closeAllList();
-
-            if (!this.youtubePlayer) {
-                await this.initYoutubePlayer();
+        clearYoutubePlaybackInterval() {
+            if (this.youtubePlaybackInterval !== undefined) {
+                window.clearInterval(this.youtubePlaybackInterval);
+                this.youtubePlaybackInterval = undefined;
             }
+        },
 
-            // Bug? If change to EnabledExternalMedia, and this.api.updateSettings(), this sync point can not be applied correctly.
-            // So it must change to EnabledSynthesizer first, then change to EnabledExternalMedia
-            this.api.settings.player.playerMode = alphaTab.PlayerMode.EnabledSynthesizer;
-            this.api.updateSettings();
-
-            let found = false;
-            let syncMethod = null;
-            let syncData = null;
-
-            // Get offset from youtubeList
-            for (const yt of this.youtubeList) {
-                if (yt.videoID === videoID) {
-                    this.youtube = yt;
-                    syncMethod = yt.syncMethod;
-                    syncData = yt.syncMethod === "advanced" ? yt.advancedSync : yt.simpleSync;
-
-                    if (yt.syncMethod === "advanced") {
-                        this.advancedSync(yt.advancedSync);
-                    } else {
-                        this.simpleSync(yt.simpleSync);
-                    }
-                    found = true;
-                    break;
-                }
+        youtubeErrorDetails(code) {
+            switch (code) {
+                case 2:
+                    return { message: "İstek bilgisi geçersiz. Video bağlantısını ve kodunu kontrol edin.", retryable: false };
+                case 5:
+                    return { message: "YouTube oynatıcısı bu videoyu tarayıcıda açamadı.", retryable: true };
+                case 100:
+                    return { message: "Video bulunamadı, kaldırılmış veya gizli.", retryable: false };
+                case 101:
+                    return { message: "Video sahibi, videonun başka sitelerde oynatılmasına izin vermiyor.", retryable: false };
+                case 150:
+                    return {
+                        message: window.location.hostname === "127.0.0.1"
+                            ? "Bu video 127.0.0.1 adresinde oynatılamadı. localhost adresini deneyin."
+                            : "Video sahibi, videonun başka sitelerde oynatılmasına izin vermiyor.",
+                        retryable: false,
+                    };
+                case 153:
+                    return {
+                        message: window.location.hostname === "127.0.0.1"
+                            ? "YouTube gerekli site bilgisini alamadı. localhost adresini deneyin."
+                            : "YouTube gerekli site bilgisini alamadı. Tarayıcı gizlilik ayarlarını kontrol edin.",
+                        retryable: true,
+                    };
+                default:
+                    return { message: "YouTube bu videoyu oynatamadı.", retryable: true };
             }
+        },
 
-            // Probably provided a video ID not in the list, switch to synth
-            if (!found) {
-                this.isInitializingAudio = false;
-                notify({
-                    type: "error",
-                    title: "Error",
-                    text: "YouTube video not found, fallback to synth.",
-                });
-                this.currentAudio = "synth";
+        setYoutubeError(code, videoID, message, retryable = false) {
+            if (!videoID || this.currentAudio !== `youtube-${videoID}`) {
                 return;
             }
 
-            this.api.settings.player.playerMode = alphaTab.PlayerMode.EnabledExternalMedia;
-            this.api.updateSettings();
-
-            this.api.player.output.handler = this.alphaTabYoutubeHandler;
-            this.youtubePlayer.cueVideoById(videoID);
-            this.youtubePlayer.setPlaybackRate(this.api.playbackSpeed);
-            this.pause();
-
-            // Re-apply sync points after pause() completes (pause triggers playing watcher which calls updateSettings)
-            await this.$nextTick();
-            if (syncMethod === "advanced") {
-                this.advancedSync(syncData);
+            this.clearYoutubePlaybackInterval();
+            if (this.playing) {
+                this.pause();
             } else {
-                this.simpleSync(syncData);
+                this.api?.pause();
             }
 
-            this.isInitializingAudio = false;
+            const details = code === null ? { message, retryable } : this.youtubeErrorDetails(code);
+            this.youtubeError = { videoID, code, ...details };
         },
 
-        async initYoutubePlayer() {
-            const ytWarning = setTimeout(() => {
-                notify({
-                    type: "warning",
-                    title: "Warning",
-                    text: "If YouTube is taking too long to load, please refresh the page.",
-                });
-            }, 5000);
-
-            this.$refs.youtube.innerHTML = "";
-
-            const isScriptLoaded = typeof YT !== "undefined";
-            console.log("isScriptLoaded:", isScriptLoaded);
-
-            // Create playerElement inside this.$refs.youtube
-            const playerElement = document.createElement("div");
-            this.$refs.youtube.appendChild(playerElement);
-
-            if (!isScriptLoaded) {
-                const tag = document.createElement("script");
-                tag.src = "https://www.youtube.com/player_api";
-                const firstScriptTag = document.getElementsByTagName("script")[0];
-                firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
-                console.log("Loading YouTube API");
-
-                const youtubeApiReady = Promise.withResolvers();
-                window.onYouTubePlayerAPIReady = youtubeApiReady.resolve;
-                await youtubeApiReady.promise;
-                console.log("YouTube API ready");
-
-                // Now Youtube Script is loaded
-                // The YT object is now available globally, even if vue route changed. Be careful.
-            } else {
-                console.log("YouTube API already loaded");
+        handleYoutubePlayerError(event) {
+            const videoID = event?.target?.getVideoData?.()?.video_id || this.youtubeVideoID;
+            const activeVideoID = this.currentAudio.startsWith("youtube-") ? this.currentAudio.substring(8) : null;
+            if (!activeVideoID || activeVideoID !== videoID) {
+                return;
             }
 
-            const youtubePlayerReady = Promise.withResolvers();
-            let currentTimeInterval = 0;
-            const player = new YT.Player(playerElement, {
-                height: "180",
-                width: "320",
-                //videoId: videoID,
-                playerVars: { "autoplay": 0 }, // we do not want autoplay
-                events: {
-                    "onReady": (e) => {
-                        youtubePlayerReady.resolve();
-                    },
+            const code = Number.isInteger(event?.data) ? event.data : null;
+            this.setYoutubeError(code, videoID, "YouTube bu videoyu açamadı.", true);
+        },
 
-                    // when the player state changes we update alphatab accordingly.
-                    "onStateChange": (e) => {
-                        //
-                        switch (e.data) {
-                            case YT.PlayerState.PLAYING:
-                                currentTimeInterval = window.setInterval(() => {
-                                    this.api?.player?.output?.updatePosition?.(player.getCurrentTime() * 1000);
-                                }, 50);
-                                this.playing = true;
-                                this.api?.play();
-                                break;
-                            case YT.PlayerState.ENDED:
-                                window.clearInterval(currentTimeInterval);
-                                this.playing = false;
-                                this.api?.stop();
-                                break;
-                            case YT.PlayerState.PAUSED:
-                                window.clearInterval(currentTimeInterval);
-                                // Ignore the pause caused by restarting with a count-in,
-                                // otherwise it would cancel the pending count-in playback.
-                                if (this.isCountingIn) {
+        async retryYoutube() {
+            const videoID = this.youtubeError?.videoID;
+            if (!videoID) return;
+            this.youtubeError = null;
+            await this.initYoutube(videoID);
+        },
+
+        async initYoutube(videoID) {
+            const requestID = ++this.youtubeRequestID;
+            this.youtubeVideoID = videoID;
+            this.youtubeError = null;
+            this.isInitializingAudio = true;
+            this.closeAllList();
+            this.clearYoutubePlaybackInterval();
+
+            try {
+                if (!this.youtubePlayerReady) {
+                    await this.initYoutubePlayer();
+                }
+                if (requestID !== this.youtubeRequestID || this.currentAudio !== `youtube-${videoID}`) return;
+
+                const youtube = this.youtubeList.find((video) => video.videoID === videoID);
+                if (!youtube) {
+                    this.setYoutubeError(null, videoID, "Bu video bu sekmenin listesinde değil.", false);
+                    return;
+                }
+                this.youtube = youtube;
+
+                // Bug? If change to EnabledExternalMedia, and this.api.updateSettings(), this sync point can not be applied correctly.
+                // So it must change to EnabledSynthesizer first, then change to EnabledExternalMedia
+                this.api.settings.player.playerMode = alphaTab.PlayerMode.EnabledSynthesizer;
+                this.api.updateSettings();
+
+                const syncData = youtube.syncMethod === "advanced" ? youtube.advancedSync : youtube.simpleSync;
+                if (youtube.syncMethod === "advanced") {
+                    this.advancedSync(youtube.advancedSync);
+                } else {
+                    this.simpleSync(youtube.simpleSync);
+                }
+
+                this.api.settings.player.playerMode = alphaTab.PlayerMode.EnabledExternalMedia;
+                this.api.updateSettings();
+                this.api.player.output.handler = this.alphaTabYoutubeHandler;
+                this.youtubePlayer.cueVideoById(videoID);
+                this.youtubePlayer.setPlaybackRate(this.api.playbackSpeed);
+                this.pause();
+
+                // Re-apply sync points after pause() completes (pause triggers playing watcher which calls updateSettings)
+                await this.$nextTick();
+                if (requestID !== this.youtubeRequestID || this.currentAudio !== `youtube-${videoID}`) return;
+                if (youtube.syncMethod === "advanced") {
+                    this.advancedSync(syncData);
+                } else {
+                    this.simpleSync(syncData);
+                }
+            } catch (error) {
+                if (requestID === this.youtubeRequestID && this.currentAudio === `youtube-${videoID}` && !this.youtubeError) {
+                    const code = Number.isInteger(error?.data) ? error.data : null;
+                    if (code === null) {
+                        this.setYoutubeError(null, videoID, error?.message || "YouTube oynatıcısı başlatılamadı.", true);
+                    } else {
+                        this.setYoutubeError(code, videoID, "YouTube bu videoyu açamadı.", true);
+                    }
+                }
+            } finally {
+                if (requestID === this.youtubeRequestID) {
+                    this.isInitializingAudio = false;
+                }
+            }
+        },
+
+        initYoutubePlayer() {
+            if (this.youtubePlayerReady) return Promise.resolve();
+            if (this.youtubePlayerPromise) return this.youtubePlayerPromise;
+
+            this.youtubePlayerPromise = this.createYoutubePlayer().finally(() => {
+                this.youtubePlayerPromise = null;
+            });
+            return this.youtubePlayerPromise;
+        },
+
+        async createYoutubePlayer() {
+            const playerLifecycle = this.youtubePlayerLifecycle;
+            const warningTimer = window.setTimeout(() => {
+                notify({
+                    type: "warning",
+                    title: "YouTube yavaş yanıt veriyor",
+                    text: "Oynatıcı yüklenmeye devam ediyor.",
+                });
+            }, 5000);
+            this.youtubeWarningTimeout = warningTimer;
+
+            let player;
+            let readyTimeout;
+            let cancelPlayerReady;
+            try {
+                await loadYoutubeIframeApi();
+                if (playerLifecycle !== this.youtubePlayerLifecycle) throw new Error("YouTube oynatıcı başlatma isteği iptal edildi.");
+                if (!this.$refs.youtube) throw new Error("YouTube oynatıcı alanı bulunamadı.");
+
+                this.$refs.youtube.innerHTML = "";
+                const playerElement = document.createElement("div");
+                this.$refs.youtube.appendChild(playerElement);
+
+                const ready = Promise.withResolvers();
+                let readyReceived = false;
+                cancelPlayerReady = () => ready.reject(new Error("YouTube oynatıcı başlatma isteği iptal edildi."));
+                this.youtubePlayerCancel = cancelPlayerReady;
+                readyTimeout = window.setTimeout(() => ready.reject(new Error("YouTube oynatıcısı zamanında hazır olmadı.")), 20000);
+                player = new YT.Player(playerElement, {
+                    height: "200",
+                    width: "320",
+                    playerVars: { autoplay: 0, origin: window.location.origin },
+                    events: {
+                        onReady: () => {
+                            readyReceived = true;
+                            ready.resolve();
+                        },
+                        onStateChange: (event) => {
+                            if (this.youtubePlayer !== player || this.currentAudio !== `youtube-${this.youtubeVideoID}` || this.youtubePlaybackFailed) return;
+                            switch (event.data) {
+                                case YT.PlayerState.PLAYING:
+                                    this.clearYoutubePlaybackInterval();
+                                    this.youtubePlaybackInterval = window.setInterval(() => {
+                                        if (this.youtubePlayer === player && this.currentAudio === `youtube-${this.youtubeVideoID}` && !this.youtubePlaybackFailed) {
+                                            this.api?.player?.output?.updatePosition?.(player.getCurrentTime() * 1000);
+                                        }
+                                    }, 50);
+                                    this.playing = true;
+                                    this.api?.play();
                                     break;
-                                }
-                                this.playing = false;
-                                this.api?.pause();
-                                break;
-                            default:
-                                break;
+                                case YT.PlayerState.ENDED:
+                                    this.clearYoutubePlaybackInterval();
+                                    this.playing = false;
+                                    this.api?.stop();
+                                    break;
+                                case YT.PlayerState.PAUSED:
+                                    this.clearYoutubePlaybackInterval();
+                                    if (this.isCountingIn) break;
+                                    this.playing = false;
+                                    this.api?.pause();
+                                    break;
+                                default:
+                                    break;
+                            }
+                        },
+                        onPlaybackRateChange: (event) => {
+                            if (this.youtubePlayer === player && this.currentAudio === `youtube-${this.youtubeVideoID}` && this.api) {
+                                this.api.playbackSpeed = event.data;
+                            }
+                        },
+                        onError: (event) => {
+                            if (!readyReceived) ready.reject(event);
+                            this.handleYoutubePlayerError(event);
+                        },
+                    },
+                });
+
+                this.youtubePlayer = player;
+                await ready.promise;
+                if (playerLifecycle !== this.youtubePlayerLifecycle) throw new Error("YouTube oynatıcı başlatma isteği iptal edildi.");
+                this.youtubePlayerReady = true;
+
+                let initialSeek = -1;
+                this.alphaTabYoutubeHandler = {
+                    get backingTrackDuration() {
+                        return player.getDuration() * 1000;
+                    },
+                    get playbackRate() {
+                        return player.getPlaybackRate();
+                    },
+                    set playbackRate(value) {
+                        player.setPlaybackRate(value);
+                    },
+                    get masterVolume() {
+                        return player.getVolume() / 100;
+                    },
+                    set masterVolume(value) {
+                        player.setVolume(value * 100);
+                    },
+                    seekTo(time) {
+                        if (player.getPlayerState() !== YT.PlayerState.PAUSED && player.getPlayerState() !== YT.PlayerState.PLAYING) {
+                            initialSeek = time / 1000;
+                        } else {
+                            player.seekTo(time / 1000);
                         }
                     },
-                    "onPlaybackRateChange": (e) => {
-                        this.api.playbackSpeed = e.data;
+                    play() {
+                        player.playVideo();
+                        if (initialSeek >= 0) {
+                            player.seekTo(initialSeek);
+                            initialSeek = -1;
+                        }
                     },
-                    "onError": (e) => {
-                        youtubePlayerReady.reject(e);
+                    pause() {
+                        player.pauseVideo();
                     },
-                },
-            });
+                };
+            } catch (error) {
+                if (this.youtubePlayer === player) {
+                    player?.destroy?.();
+                    this.youtubePlayer = null;
+                }
+                this.youtubePlayerReady = false;
+                throw error;
+            } finally {
+                window.clearTimeout(warningTimer);
+                window.clearTimeout(readyTimeout);
+                if (this.youtubePlayerCancel === cancelPlayerReady) {
+                    this.youtubePlayerCancel = null;
+                }
+                if (this.youtubeWarningTimeout === warningTimer) this.youtubeWarningTimeout = undefined;
+            }
+        },
 
-            await youtubePlayerReady.promise;
-            console.log("YouTube Player ready");
-
-            let initialSeek = -1;
-            const alphaTabYoutubeHandler = {
-                get backingTrackDuration() {
-                    return player.getDuration() * 1000;
-                },
-                get playbackRate() {
-                    console.log("Get playback rate:", player.getPlaybackRate());
-                    return player.getPlaybackRate();
-                },
-                set playbackRate(value) {
-                    console.log("Set playback rate:", value);
-                    player.setPlaybackRate(value);
-                },
-                get masterVolume() {
-                    return player.getVolume() / 100;
-                },
-                set masterVolume(value) {
-                    player.setVolume(value * 100);
-                },
-                seekTo(time) {
-                    if (
-                        player.getPlayerState() !== YT.PlayerState.PAUSED &&
-                        player.getPlayerState() !== YT.PlayerState.PLAYING
-                    ) {
-                        initialSeek = time / 1000;
-                    } else {
-                        player.seekTo(time / 1000);
-                    }
-                },
-                play() {
-                    player.playVideo();
-                    if (initialSeek >= 0) {
-                        player.seekTo(initialSeek);
-                        initialSeek = -1;
-                    }
-                },
-                pause() {
-                    player.pauseVideo();
-                },
-            };
-
-            this.youtubePlayer = player;
-            this.alphaTabYoutubeHandler = alphaTabYoutubeHandler;
-            clearTimeout(ytWarning);
+        destroyYoutubePlayer() {
+            this.youtubePlayerLifecycle++;
+            this.youtubeRequestID++;
+            this.youtubeError = null;
+            this.youtubeVideoID = null;
+            this.clearYoutubePlaybackInterval();
+            window.clearTimeout(this.youtubeWarningTimeout);
+            this.youtubeWarningTimeout = undefined;
+            this.youtubePlayerCancel?.();
+            this.youtubePlayerCancel = null;
+            this.youtubePlayer?.destroy?.();
+            this.youtubePlayer = null;
+            this.youtubePlayerReady = false;
+            this.youtubePlayerPromise = null;
+            this.alphaTabYoutubeHandler = null;
         },
 
         getStaveProfile() {
@@ -1901,7 +2078,7 @@ export default defineComponent({
                     Restart
                 </button>
 
-                <button class="btn btn-primary" @click="playPause" :class="{ active: playing }" :disabled="currentAudio === 'synth' && !synthReady">
+                <button class="btn btn-primary" @click="playPause" :class="{ active: playing }" :disabled="(currentAudio === 'synth' && !synthReady) || youtubePlaybackFailed || youtubeLoading">
                     <span v-if="!playing">
                         <font-awesome-icon :icon='["fas", "play"]' />
                         Play
@@ -1994,8 +2171,18 @@ export default defineComponent({
                 </div>
 
                 <!-- Youtube Player -->
-                <div v-show='currentAudio.startsWith("youtube-")'>
+                <div v-show='currentAudio.startsWith("youtube-")' class="youtube-view">
+                    <div v-if="youtubeLoading" class="alert alert-secondary mb-0" role="status">Video hazırlanıyor…</div>
                     <div ref="youtube" class="player"></div>
+                    <div v-if="youtubePlaybackFailed" class="youtube-error alert alert-danger mb-0" role="alert">
+                        <p class="mb-1">{{ youtubeError.message }}</p>
+                        <p class="mb-2" v-if="youtubeError.code !== null">YouTube hata kodu: {{ youtubeError.code }}</p>
+                        <a class="d-block mb-2" :href="`https://www.youtube.com/watch?v=${youtubeError.videoID}`" target="_blank" rel="noopener noreferrer">YouTube'da izle</a>
+                        <a v-if="youtubeLocalhostHref && [150, 153].includes(youtubeError.code)" class="d-block mb-2" :href="youtubeLocalhostHref" target="_blank" rel="noopener noreferrer">Bu sayfayı localhost adresinde aç</a>
+                        <button v-if="youtubeError.retryable" class="btn btn-sm btn-secondary me-2 mb-1" @click="retryYoutube">Yeniden dene</button>
+                        <router-link class="btn btn-sm btn-secondary me-2 mb-1" :to="`/tab/${tabID}/edit/audio`">Başka video veya ses seç</router-link>
+                        <button class="btn btn-sm btn-outline-secondary mb-1" @click="audioSynth">Örnek seslere dön</button>
+                    </div>
                 </div>
 
                 <!-- Audio Player -->
@@ -2101,7 +2288,7 @@ $youtube-height: 200px;
         white-space: nowrap;
 
         .player {
-            height: 180px;
+            height: 200px;
         }
 
         .sync-offset {
@@ -2122,6 +2309,21 @@ $youtube-height: 200px;
 
 .youtube {
     margin-top: 20px;
+}
+
+.youtube-view {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+
+    .player {
+        height: 200px;
+    }
+}
+
+.youtube-error {
+    white-space: normal;
+    width: min(420px, calc(100vw - 20px));
 }
 
 h1 {

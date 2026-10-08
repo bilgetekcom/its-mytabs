@@ -640,7 +640,8 @@ export default defineComponent({
 
             <!-- Show alert if using a local ip -->
             <div class="alert alert-info mt-3" role="alert">
-                Tip: Youtube videos may not work on a private ip (such as 127.0.0.1). Please use <strong>localhost</strong> or other hostname.
+                Yerel kullanımda YouTube videolarını <strong>localhost</strong> adresinden açın.
+                Bazı videolar IP adresinde (127.0.0.1) oynatılamaz; bazı kayıtlarda ise yayıncı uygulama içinde oynatmayı kapatmış olabilir.
             </div>
 
             <div class="mb-3">
@@ -659,6 +660,7 @@ export default defineComponent({
                         height="200"
                         :src="`https://www.youtube.com/embed/${video.videoID}`"
                         title="YouTube video player"
+                        referrerpolicy="strict-origin-when-cross-origin"
                         frameborder="0"
                         allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
                         allowfullscreen

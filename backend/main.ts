@@ -102,7 +102,7 @@ export async function main() {
 
         if (Deno.build.standalone) {
             if (launchBrowser !== "false") {
-                start(url);
+                start(isLocalMode ? `http://localhost:${info.port}` : url);
             }
         }
     });
