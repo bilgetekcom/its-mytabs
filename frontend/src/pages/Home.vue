@@ -16,6 +16,7 @@ export default defineComponent({
             ready: false,
             isLoggedIn: false,
             searchQuery: "",
+            loadError: "",
             setting: {},
             recentLimit: 20,
         };
@@ -32,7 +33,9 @@ export default defineComponent({
 
         try {
             const res = await fetch(baseURL + "/api/tabs", { credentials: "include" });
+            if (!res.ok) throw new Error("Şarkı kitaplığı yüklenemedi.");
             const data = await res.json();
+            if (data.ok === false || !Array.isArray(data.tabs)) throw new Error("Şarkı kitaplığı yüklenemedi.");
             // The API can return { ok: false } without a tabs array (e.g. an
             // expired session), so guard against assigning undefined.
             this.tabList = Array.isArray(data.tabs) ? data.tabs : [];
@@ -41,10 +44,13 @@ export default defineComponent({
             await this.$nextTick();
             this.$refs.searchInput?.focus();
         } catch (error) {
+            this.loadError = error.message || "Şarkı kitaplığı yüklenemedi.";
             notify({
-                text: error.message,
+                text: this.loadError,
                 type: "error",
             });
+        } finally {
+            this.ready = true;
         }
     },
 
@@ -77,14 +83,14 @@ export default defineComponent({
             const groups = {};
 
             for (const tab of this.filteredTabList) {
-                const rawArtist = tab.artist || "Unknown Artist";
+                const rawArtist = tab.artist || "Bilinmeyen sanatçı";
 
                 // Normalize for grouping (ignore case + trim)
                 const key = rawArtist.trim().toLowerCase();
 
                 if (!groups[key]) {
                     groups[key] = {
-                        displayName: rawArtist.trim() || "Unknown Artist",
+                        displayName: rawArtist.trim() || "Bilinmeyen sanatçı",
                         tabs: [],
                     };
                 }
@@ -123,12 +129,12 @@ export default defineComponent({
                     this.tabList = this.tabList.filter((tab) => tab.id !== id);
 
                     notify({
-                        text: "Tab deleted successfully",
+                        text: "Eser kitaplıktan silindi.",
                         type: "success",
                     });
                 } else {
                     const data = await res.json();
-                    throw new Error(data.message || "Failed to delete tab");
+                    throw new Error(data.message || "Eser silinemedi.");
                 }
             } catch (error) {
                 notify({
@@ -156,9 +162,9 @@ export default defineComponent({
                             type="text"
                             class="form-control search-input"
                             v-model="searchQuery"
-                            placeholder="Search by title or artist..."
+                            placeholder="Eser veya sanatçı ara..."
                             ref="searchInput"
-                            aria-label="Search tabs"
+                            aria-label="Eserlerde ara"
                         />
 
                         <button
@@ -166,7 +172,7 @@ export default defineComponent({
                             type="button"
                             @click='searchQuery = ""'
                             v-if="searchQuery"
-                            aria-label="Clear search"
+                            aria-label="Aramayı temizle"
                         >
                             ✕
                         </button>
@@ -174,10 +180,20 @@ export default defineComponent({
                 </div>
 
                 <div class="mb-2 ms-3">
-                    Total Tabs: {{ tabList.length }}
+                    Toplam eser: {{ tabList.length }}
                     <span v-if="searchQuery" class="text-muted">
-                        ({{ filteredTabList.length }} shown)
+                        ({{ filteredTabList.length }} sonuç)
                     </span>
+                </div>
+
+                <div v-if="loadError" class="alert alert-danger ms-3" role="alert">
+                    {{ loadError }}
+                    <button class="btn btn-sm btn-outline-danger ms-2" @click="$router.go(0)">Yeniden dene</button>
+                </div>
+
+                <div v-else-if="tabList.length === 0" class="empty-state text-center py-5 mb-4 fs-5">
+                    <p class="text-muted">Kitaplığınız henüz boş.</p>
+                    <router-link class="btn btn-primary" to="/new-tab">İlk eseri ekle</router-link>
                 </div>
 
                 <template v-if="this.setting.groupByArtist && groupedTabs">
@@ -210,10 +226,10 @@ export default defineComponent({
                     v-if="filteredTabList.length === 0 && searchQuery"
                     class="empty-state text-center py-5 mb-4 fs-5"
                 >
-                    <p class="text-muted">No tabs found for "{{ searchQuery }}"</p>
+                    <p class="text-muted">“{{ searchQuery }}” için eser bulunamadı.</p>
 
                     <button class="btn btn-sm btn-outline-secondary" @click='searchQuery = ""'>
-                        Clear search
+                        Aramayı temizle
                     </button>
                 </div>
             </div>
@@ -221,11 +237,11 @@ export default defineComponent({
             <!-- Column 2: Recent Tabs -->
             <div class="col-md-12 col-lg-4 order-1 order-lg-0 box box-left">
                 <div class="ms-3 mb-2">
-                    <h4>Recent Tabs</h4>
+                    <h4>Son açılanlar</h4>
                 </div>
 
                 <div v-if="recentTabs.length === 0" class="empty-msg">
-                    No Recent Tabs
+                    Henüz açılan eser yok
                 </div>
 
                 <TabItem
@@ -241,11 +257,11 @@ export default defineComponent({
             <!-- Column 3: Fav Tabs -->
             <div class="col-md-12 col-lg-4 order-2 order-lg-0 box box-right">
                 <div class="ms-3 mb-2">
-                    <h4>Favorite Tabs</h4>
+                    <h4>Favoriler</h4>
                 </div>
 
                 <div v-if="favoritedTabs.length === 0" class="empty-msg">
-                    No Favorite Tabs
+                    Henüz favori yok
                 </div>
 
                 <TabItem
@@ -258,6 +274,7 @@ export default defineComponent({
                 />
             </div>
         </div>
+        <div v-else class="text-center py-5 text-muted" role="status">Şarkı kitaplığı yükleniyor…</div>
     </div>
 </template>
 

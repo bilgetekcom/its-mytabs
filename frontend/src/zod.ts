@@ -14,6 +14,6 @@ export const SettingSchema = z.object({
     showSyncOffset: z.boolean().default(true),
     scale: z.number().min(0.1).default(1),
     toolbarAutoHide: z.boolean().default(false),
-    preferredInstrument: z.enum(["none", "bass", "guitar"]).default("none"),
+    preferredInstrument: z.enum(["none", "bass", "guitar"]).default("guitar"),
 });
 export type Setting = z.infer<typeof SettingSchema>;

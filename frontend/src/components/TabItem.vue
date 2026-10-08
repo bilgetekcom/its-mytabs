@@ -63,6 +63,7 @@ export default defineComponent({
     <div class="tab-item rounded">
         <button
             class="fav-btn"
+            :aria-label="tab.fav ? 'Favorilerden çıkar' : 'Favorilere ekle'"
             @click="toggleFav"
             :class='{ "fav-active": tab.fav }'
         >
@@ -77,10 +78,10 @@ export default defineComponent({
         </router-link>
 
         <div class="btn-group action-buttons" role="group" aria-label="Tab actions">
-            <button class="btn btn-sm btn-secondary" @click="handleEdit" aria-label="Edit">
+            <button class="btn btn-sm btn-secondary" @click="handleEdit" aria-label="Düzenle">
                 <font-awesome-icon icon="pen" />
             </button>
-            <button class="btn btn-sm btn-danger" @click="handleDelete" aria-label="Delete">
+            <button class="btn btn-sm btn-danger" @click="handleDelete" aria-label="Sil">
                 <font-awesome-icon icon="trash" />
             </button>
         </div>

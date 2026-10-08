@@ -23,7 +23,7 @@ export default defineComponent({
                 scrollMode: "",
                 scale: 1,
                 toolbarAutoHide: false,
-                preferredInstrument: "none",
+                preferredInstrument: "guitar",
             },
             isProcessing: false,
         };
