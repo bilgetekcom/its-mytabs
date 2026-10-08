@@ -5,6 +5,7 @@ export const SettingSchema = z.object({
     scoreStyle: z.enum(["tab", "score-tab", "score", "auto", "horizontal-tab"]).default("tab"),
     scoreColor: z.enum(["light", "dark"]).default("dark"),
     noteColor: z.enum(["rocksmith", "louis-bass-v", "none"]).default("rocksmith"),
+    soundFont: z.enum(["generaluser-gs", "sonivox"]).default("generaluser-gs"),
     cursor: z.enum(["animated", "instant", "bar", "invisible"]).default(
         "animated",
     ),

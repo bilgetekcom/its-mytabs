@@ -15,6 +15,7 @@ export default defineComponent({
             setting: {
                 scoreColor: "",
                 noteColor: "",
+                soundFont: "generaluser-gs",
                 cursor: "",
                 scoreStyle: "",
                 groupByArtist: false,
@@ -125,6 +126,14 @@ export default defineComponent({
         <h1 class="mb-3">Settings</h1>
 
         <h2 class="mt-4 mb-4">Tab Player</h2>
+
+        <div class="mb-3">
+            <label for="soundFont" class="form-label">Ses kalitesi</label>
+            <select id="soundFont" class="form-select" v-model="setting.soundFont">
+                <option value="generaluser-gs">GeneralUser GS</option>
+                <option value="sonivox">Sonivox (hafif/eski)</option>
+            </select>
+        </div>
 
         <!--     scoreStyle: z.enum(["tab", "score-tab", "score"]).default("tab"), -->
         <div class="mb-3">

@@ -112,6 +112,15 @@ export default defineComponent({
             simpleSyncSecond: -1,
             toolbarAutoHide: false,
             isInitializingAudio: false, // Flag to prevent sync point clearing during audio init
+            soundFontBank: "generaluser-gs",
+            soundFontFallbackTried: false,
+            soundFontLoading: true,
+            soundFontFailed: false,
+            soundFontProgress: 0,
+            soundFontLoaded: false,
+            synthPlayerReady: false,
+            synthReady: false,
+            handledSoundFontErrors: new WeakSet(),
         };
     },
     computed: {
@@ -127,6 +136,10 @@ export default defineComponent({
             } else {
                 return undefined;
             }
+        },
+
+        soundFontLabel() {
+            return this.soundFontBank === "sonivox" ? "Sonivox" : "GeneralUser GS";
         },
     },
 
@@ -482,7 +495,7 @@ export default defineComponent({
         },
 
         playPause() {
-            if (!this.api || !this.ready) {
+            if (!this.api || !this.canStartPlayback()) {
                 return;
             }
 
@@ -490,7 +503,7 @@ export default defineComponent({
         },
 
         play() {
-            if (!this.api || !this.ready) {
+            if (!this.api || !this.canStartPlayback()) {
                 return;
             }
             this.playing = true;
@@ -511,6 +524,10 @@ export default defineComponent({
          * count-in. When count-in is enabled, stop first and count in again.
          */
         startPlayback() {
+            if (!this.api || !this.canStartPlayback()) {
+                return;
+            }
+
             if (this.playing && this.enableCountIn) {
                 this.api.pause();
 
@@ -523,6 +540,61 @@ export default defineComponent({
             } else {
                 this.play();
             }
+        },
+
+        canStartPlayback() {
+            return this.ready && (this.currentAudio !== "synth" || this.synthReady);
+        },
+
+        syncSynthReady() {
+            this.synthReady = this.soundFontLoaded && this.synthPlayerReady;
+        },
+
+        soundFontURL(bank) {
+            return bank === "sonivox" ? "/soundfont/sonivox.sf2" : "/soundfont/generaluser-gs.sf2";
+        },
+
+        retrySoundFont() {
+            if (!this.api || this.soundFontLoading) {
+                return;
+            }
+
+            this.soundFontFallbackTried = false;
+            this.soundFontBank = this.setting.soundFont;
+            this.soundFontFailed = false;
+            this.soundFontLoading = true;
+            this.soundFontLoaded = false;
+            this.soundFontProgress = 0;
+            this.synthReady = false;
+            this.api.loadSoundFontFromUrl(this.soundFontURL(this.soundFontBank), false);
+        },
+
+        handleSoundFontLoadFailure(error) {
+            this.handledSoundFontErrors.add(error);
+            this.soundFontLoading = false;
+            this.soundFontLoaded = false;
+            this.synthReady = false;
+
+            if (this.soundFontBank === "generaluser-gs" && !this.soundFontFallbackTried) {
+                this.soundFontFallbackTried = true;
+                this.soundFontBank = "sonivox";
+                this.soundFontLoading = true;
+                this.soundFontProgress = 0;
+                notify({
+                    type: "error",
+                    title: "Ses bankası yüklenemedi",
+                    text: "GeneralUser GS yüklenemedi; eski ses bankasına geçiliyor.",
+                });
+                this.api.loadSoundFontFromUrl(this.soundFontURL("sonivox"), false);
+                return;
+            }
+
+            this.soundFontFailed = true;
+            notify({
+                type: "error",
+                title: "Ses bankası yüklenemedi",
+                text: `${this.soundFontLabel} yüklenemedi. Yeniden deneyin.`,
+            });
         },
 
         /**
@@ -773,6 +845,15 @@ export default defineComponent({
                     this.$emit("setFixedHeader", true);
                 }
 
+                this.soundFontBank = this.setting.soundFont;
+                this.soundFontFallbackTried = false;
+                this.soundFontLoading = true;
+                this.soundFontFailed = false;
+                this.soundFontProgress = 0;
+                this.soundFontLoaded = false;
+                this.synthPlayerReady = false;
+                this.synthReady = false;
+
                 this.api = new alphaTab.AlphaTabApi(this.$refs.bassTabContainer, {
                     notation: {
                         // Hide tab rhythm when the score staff is visible (Tab + Score)
@@ -801,7 +882,7 @@ export default defineComponent({
                         enableCursor: true,
                         enableAnimatedBeatCursor: this.animatedCursor,
                         enableUserInteraction: true,
-                        soundFont: "/soundfont/sonivox.sf2",
+                        soundFont: this.soundFontURL(this.soundFontBank),
                         // Avoid initial scroll jump in scroll mode, which make it unable to see the title
                         scrollMode: ScrollMode.Off,
                         scrollOffsetY: -50,
@@ -832,10 +913,37 @@ export default defineComponent({
                 // this right after a source switch (while the range is saved),
                 // and on a later tick once the re-initialized player settles.
                 this.api.playerReady.on(() => {
+                    this.synthPlayerReady = true;
+                    this.syncSynthReady();
                     this.restorePlaybackRange();
                     if (this.savedPlaybackRange) {
                         setTimeout(() => this.seekToHighlightedRangeStart(), 0);
                     }
+                });
+
+                this.api.error.on((error) => {
+                    queueMicrotask(() => {
+                        if (this.handledSoundFontErrors.has(error)) {
+                            return;
+                        }
+                        generalError(error);
+                    });
+                });
+                this.api.player?.soundFontLoadFailed.on((error) => {
+                    this.handleSoundFontLoadFailure(error);
+                });
+
+                this.api.soundFontLoad.on((progress) => {
+                    this.soundFontProgress = progress.total > 0
+                        ? Math.min(100, Math.round(progress.loaded / progress.total * 100))
+                        : 0;
+                });
+                this.api.soundFontLoaded.on(() => {
+                    this.soundFontLoading = false;
+                    this.soundFontFailed = false;
+                    this.soundFontLoaded = true;
+                    this.soundFontProgress = 100;
+                    this.syncSynthReady();
                 });
 
                 // Clicking on the score seeks. When already playing with count-in
@@ -1756,6 +1864,14 @@ export default defineComponent({
 <template>
     <div class="main" :class='{ "light": this.setting.scoreColor === "light" }'>
         <h1>{{ tab.title }}</h1>
+        <div v-if="!synthReady && !soundFontFailed" class="text-center text-secondary mb-2">
+            <span v-if="soundFontLoaded">Sesler hazırlanıyor</span>
+            <span v-else>{{ soundFontLabel }} yükleniyor</span>: %{{ soundFontProgress }}
+            <progress :value="soundFontProgress" max="100" aria-label="Ses bankası yükleniyor"></progress>
+        </div>
+        <div v-else-if="soundFontFailed" class="text-center text-warning mb-2">
+            Sesler yüklenemedi. <button class="btn btn-sm btn-secondary" @click="retrySoundFont">Yeniden dene</button>
+        </div>
         <h2>{{ tab.artist }}</h2>
         <div class="key-signature badge bg-secondary" v-if="keySignature && setting.showKeySignature">
             {{ keySignature }}
@@ -1785,7 +1901,7 @@ export default defineComponent({
                     Restart
                 </button>
 
-                <button class="btn btn-primary" @click="playPause" :class="{ active: playing }">
+                <button class="btn btn-primary" @click="playPause" :class="{ active: playing }" :disabled="currentAudio === 'synth' && !synthReady">
                     <span v-if="!playing">
                         <font-awesome-icon :icon='["fas", "play"]' />
                         Play
@@ -1840,7 +1956,7 @@ export default defineComponent({
                 </div>
 
                 <div class="audio item" @click="audioSynth" :class='{ active: currentAudio === "synth" }'>
-                    <div class="name">Synth</div>
+                    <div class="name">Örnek sesler ({{ soundFontLabel }})</div>
                 </div>
 
                 <div class="audio item" @click="audioBackingTrack" :class='{ active: currentAudio === "backingTrack" }' v-if="enableBackingTrack">
