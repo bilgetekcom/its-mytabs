@@ -1,7 +1,7 @@
 <script>
 import { defineComponent } from "vue";
 import { BButton, BButtonGroup, BFormInput, BSpinner } from "bootstrap-vue-next";
-import { authClient, isLoggedIn } from "../auth-client.ts";
+import { authClient, isLocalMode, isLoggedIn } from "../auth-client.ts";
 import { notify } from "@kyvg/vue3-notification";
 import Logo from "../components/Logo.vue";
 
@@ -16,6 +16,7 @@ export default defineComponent({
     data() {
         return {
             isLoggedIn: false,
+            isLocalMode,
             ready: false,
             fixedNavbar: false,
         };
@@ -68,7 +69,7 @@ export default defineComponent({
                     </router-link>
                 </div>
 
-                <div class="right" v-show="ready">
+                <div class="right" v-show="ready" v-if="!isLocalMode">
                     <a href="#" @click.prevent="signOut()" v-if="isLoggedIn">
                         <font-awesome-icon :icon='["fas", "arrow-right-from-bracket"]' />
                         Çıkış yap

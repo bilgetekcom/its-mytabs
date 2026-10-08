@@ -8,6 +8,7 @@ import Login from "./pages/Login.vue";
 import TabConfig from "./pages/TabConfig.vue";
 import Settings from "./pages/Settings.vue";
 import TabNew from "./pages/TabNew.vue";
+import { isLocalMode } from "./auth-client.ts";
 
 const Tab = () => import("./pages/Tab.vue");
 
@@ -77,6 +78,11 @@ export const router = createRouter({
 
 // Demo mode navigation guard
 router.beforeEach((to, from, next) => {
+    if (isLocalMode && (to.path === "/login" || to.path === "/register")) {
+        next("/");
+        return;
+    }
+
     if (window.isDemo === true) {
         // Allow access to Settings, Tab pages, and Register (setup) page only
         const isTabPage = to.path.startsWith("/tab/");

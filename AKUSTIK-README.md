@@ -9,10 +9,13 @@
 - Başarılı dosyalar seçimden çıkarılır. Bozuk dosyalar diğer eserlerin yüklenmesini engellemez.
 - Yeni açılan eserlerde gitar kanalı otomatik seçilir. Önceden seçilen kanal hatırlanır.
 - Oynatma, hız ayarı, metronom, sayım ve bölüm döngüsü ana projeden gelir.
+- Yerel kullanımda hesap, kullanıcı adı ve parola gerekmez; doğrudan kitaplık açılır.
 
 ## Windows'ta açma
 
-Hazırlanmış yerel pakette `Baslat.cmd` dosyasını açın. Sunucu arka planda yalnızca `127.0.0.1:47777` adresinde çalışır; tarayıcıda kitaplık açılır. `Durdur.cmd` sunucuyu kapatır. Kişisel kitaplık ve hesap `data/` klasöründe saklanır. Giriş gerekirse hazırlanan pakette `data/Giris-bilgileri.txt` dosyasındaki yerel hesap kullanılabilir.
+Hazırlanmış yerel pakette `Baslat.cmd` dosyasını açın. Sunucu arka planda yalnızca `127.0.0.1:47777` adresinde çalışır; tarayıcıda kitaplık açılır. `Durdur.cmd` sunucuyu kapatır. Kişisel kitaplık ve ayarlar `data/` klasöründe saklanır. Yeni kurulumda da hesap oluşturulmaz. Mevcut hesabın kayıtlı ayarları varsa yerel mod bunları kullanmaya devam eder.
+
+Bu fork varsayılan olarak parolasız yerel modda çalışır. Hesaplı sunucu kurulumu için kaynak kodla başlatırken `MYTABS_LOCAL_MODE=false` kullanılabilir. Yerel mod sunucuyu her durumda `127.0.0.1` adresine bağlar.
 
 Kaynak koddan geliştirmek için ana README'deki Deno kurulumu ve `deno task setup` akışını kullanın. Windows paketi için:
 
@@ -30,11 +33,9 @@ Koleksiyon rock/metal ağırlıklıdır. Nothing Else Matters, Hotel California,
 Tekrarlanabilir arşiv aktarımı:
 
 ```powershell
-$env:MYTABS_EMAIL = 'yerel-hesap-e-postasi'
-$env:MYTABS_PASSWORD = 'yerel-hesap-parolasi'
 node extra/import-pool.mjs 'C:\TabArsivi' 'import-report.json'
 ```
 
-Bu komut `deno task setup` sonrası, çalışan yerel sunucuya bağlanır. İç içe klasörleri tarar, desteklenen dosyaları doğrular, mevcut dosya içeriklerini karşılaştırır ve yeni bir JSON sonuç raporu üretir. Önceki raporun üzerine yazmaz. Parola rapora yazılmaz. CLI aktarımını kitaplık başına bir işlem olarak çalıştırın. Arayüzdeki klasör seçimi dosya başına sonuç verir; arşiv genelinde içerik karşılaştırması CLI aktarımında yapılır.
+Bu komut `deno task setup` sonrası, çalışan yerel sunucuya parolasız bağlanır. İç içe klasörleri tarar, desteklenen dosyaları doğrular, mevcut dosya içeriklerini karşılaştırır ve yeni bir JSON sonuç raporu üretir. Önceki raporun üzerine yazmaz. Yalnızca hesaplı modda `MYTABS_EMAIL` ve `MYTABS_PASSWORD` gerekir. CLI aktarımını kitaplık başına bir işlem olarak çalıştırın. Arayüzdeki klasör seçimi dosya başına sonuç verir; arşiv genelinde içerik karşılaştırması CLI aktarımında yapılır.
 
 Yazılım MIT lisansını ve ana proje atıflarını korur. Şarkı dosyaları, kişisel veriler ve giriş bilgileri `data/` altında kalır; Git deposuna dahil edilmez. MP3'ten otomatik tab/akor çıkarma bu sürümün kapsamına dahil edilmemiştir.

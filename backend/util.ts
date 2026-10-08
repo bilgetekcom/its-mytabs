@@ -10,6 +10,8 @@ import { supportedAudioFormatList } from "./common.ts";
 const denoJSONCPath = path.join(getSourceDir(), "./deno.jsonc");
 export const denoJSONC = jsonc.parse(await Deno.readTextFile(denoJSONCPath));
 export const isDemoMode = Deno.env.get("MYTABS_DEMO_MODE") === "true";
+// This personal fork opens directly on localhost. Hosted installs may opt into accounts.
+export const isLocalMode = !isDemoMode && Deno.env.get("MYTABS_LOCAL_MODE") !== "false";
 
 let version = "unknown";
 if (denoJSONC && typeof denoJSONC === "object" && !Array.isArray(denoJSONC) && typeof denoJSONC.version === "string") {
@@ -19,7 +21,7 @@ if (denoJSONC && typeof denoJSONC === "object" && !Array.isArray(denoJSONC) && t
 // Parse deno.jsonc
 export const appVersion: string = version;
 
-export const host = Deno.env.get("MYTABS_HOST");
+export const host = isLocalMode ? "127.0.0.1" : Deno.env.get("MYTABS_HOST");
 export const port = Deno.env.get("MYTABS_PORT") ? parseInt(Deno.env.get("MYTABS_PORT")!) : 47777;
 
 export async function getDataDir() {
@@ -50,6 +52,21 @@ export const devOriginList = [
     "http://localhost:5174",
     "http://localhost:5175",
 ];
+
+export function isAllowedLocalOrigin(origin: string | null): boolean {
+    if (!origin) {
+        return true;
+    }
+    if (isDev() && devOriginList.includes(origin)) {
+        return true;
+    }
+    try {
+        const url = new URL(origin);
+        return url.protocol === "http:" && ["127.0.0.1", "localhost"].includes(url.hostname) && (url.port || "80") === String(port);
+    } catch {
+        return false;
+    }
+}
 
 export function getFrontendDir(): string {
     return path.join(getSourceDir(), "./dist");

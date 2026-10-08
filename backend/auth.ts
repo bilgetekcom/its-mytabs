@@ -6,7 +6,7 @@ import { Buffer } from "node:buffer";
 import { devOriginList } from "./util.ts";
 import { createAuthMiddleware } from "better-auth/api";
 import * as path from "@std/path";
-import { dataDir } from "./util.ts";
+import { dataDir, isLocalMode } from "./util.ts";
 import { Context } from "@hono/hono";
 
 const configJSONPath = path.join(dataDir, "config.json");
@@ -64,7 +64,7 @@ async function getSecretKey() {
 }
 
 export function isFinishSetup() {
-    return hasUser();
+    return isLocalMode || hasUser();
 }
 
 export function isDisableSignUp() {
@@ -80,6 +80,9 @@ export async function checkLogin(c: Context) {
 }
 
 export async function isLoggedIn(c: Context) {
+    if (isLocalMode) {
+        return true;
+    }
     const session = await auth.api.getSession(c.req.raw);
     return !!session;
 }
@@ -89,6 +92,11 @@ export async function isLoggedIn(c: Context) {
  * @param c
  */
 export async function getCurrentSession(c: Context) {
+    if (isLocalMode) {
+        // Reuse the first owner's settings without requiring a cookie or creating an account.
+        const owner = db.prepare("SELECT id FROM user ORDER BY createdAt, id LIMIT 1").get();
+        return { user: { id: typeof owner?.id === "string" ? owner.id : "local-user" } };
+    }
     const session = await auth.api.getSession(c.req.raw);
     if (!session) {
         throw new Error("Not logged in");

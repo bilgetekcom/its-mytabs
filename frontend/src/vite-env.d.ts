@@ -14,6 +14,9 @@ declare global {
          */
         isDemo: boolean;
 
+        /** Indicates that authentication is bypassed for personal localhost use. */
+        isLocalMode: boolean;
+
         /**
          * The alphaTab API instance exposed for debugging on the tab page.
          * Set in Tab.vue (initContainer).

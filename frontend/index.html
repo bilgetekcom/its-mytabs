@@ -16,8 +16,10 @@
             }
             const config = JSON.parse(appConfigElement.textContent);
             window.isDemo = config.isDemo;
+            window.isLocalMode = config.isLocalMode === true;
         } catch (e) {
             window.isDemo = false;
+            window.isLocalMode = false;
         }
         </script>
         <script type="module" src="/src/main.ts"></script>

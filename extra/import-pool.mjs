@@ -1,5 +1,5 @@
-// Import a local Guitar Pro / MusicXML collection through the authenticated API.
-// MYTABS_EMAIL and MYTABS_PASSWORD must identify the existing personal account.
+// Import a local Guitar Pro / MusicXML collection without a login in local mode.
+// Account mode optionally uses MYTABS_EMAIL and MYTABS_PASSWORD.
 // Run after deno task setup. alphaTab's CLI parser uses its official Node runtime.
 // Usage: node extra/import-pool.mjs <folder> [report.json] [http://127.0.0.1:47777]
 import * as path from "node:path";
@@ -16,31 +16,35 @@ const baseURL = new URL(process.argv[4] ?? "http://127.0.0.1:47777");
 if (!["127.0.0.1", "localhost", "[::1]"].includes(baseURL.hostname)) {
     throw new Error("Bu kişisel içe aktarıcı yalnızca yerel sunucuya bağlanır.");
 }
-const email = process.env.MYTABS_EMAIL;
-const password = process.env.MYTABS_PASSWORD;
-if (!email || !password) {
-    throw new Error("MYTABS_EMAIL ve MYTABS_PASSWORD ortam değişkenlerini ayarlayın.");
-}
 // Reserve the report before modifying the library; preserve earlier reports.
 const reportFile = await fs.open(reportPath, "wx").catch((error) => {
     if (error.code === "EEXIST") throw new Error("Rapor dosyası zaten var. Yeni bir rapor adı belirtin.");
     throw error;
 });
 
-const login = await fetch(new URL("/api/auth/sign-in/email", baseURL), {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Origin: baseURL.origin },
-    body: JSON.stringify({ email, password }),
-});
-if (!login.ok) {
-    throw new Error(`Yerel hesaba giriş başarısız (${login.status}).`);
+const modeResponse = await fetch(new URL("/api/app-config", baseURL));
+const localMode = modeResponse.ok && (await modeResponse.json()).isLocalMode === true;
+const headers = { Origin: baseURL.origin };
+if (!localMode) {
+    const email = process.env.MYTABS_EMAIL;
+    const password = process.env.MYTABS_PASSWORD;
+    if (!email || !password) {
+        throw new Error("Hesaplı mod için MYTABS_EMAIL ve MYTABS_PASSWORD ortam değişkenlerini ayarlayın.");
+    }
+    const login = await fetch(new URL("/api/auth/sign-in/email", baseURL), {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Origin: baseURL.origin },
+        body: JSON.stringify({ email, password }),
+    });
+    if (!login.ok) {
+        throw new Error(`Yerel hesaba giriş başarısız (${login.status}).`);
+    }
+    headers.Cookie = login.headers.getSetCookie().map((value) => value.split(";")[0]).join("; ");
+    await login.arrayBuffer();
+    if (!headers.Cookie) {
+        throw new Error("Oturum çerezi alınamadı.");
+    }
 }
-const cookie = login.headers.getSetCookie().map((value) => value.split(";")[0]).join("; ");
-await login.arrayBuffer();
-if (!cookie) {
-    throw new Error("Oturum çerezi alınamadı.");
-}
-const headers = { Cookie: cookie, Origin: baseURL.origin };
 const listResponse = await fetch(new URL("/api/tabs", baseURL), { headers });
 const existing = await listResponse.json();
 if (!listResponse.ok || existing.ok === false || !Array.isArray(existing.tabs)) {

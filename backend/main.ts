@@ -6,7 +6,7 @@ import { SignUpSchema, SyncRequestSchema, UpdateTabFavSchema, UpdateTabInfoSchem
 import { db, hasUser, isInitDB, kv, migrate } from "./db.ts";
 import { cors } from "@hono/hono/cors";
 import { serveStatic } from "@hono/hono/deno";
-import { appVersion, checkFilename, dataDir, devOriginList, getFrontendDir, getSourceDir, host, isDemoMode, isDev, port, start, tabDir } from "./util.ts";
+import { appVersion, checkFilename, dataDir, devOriginList, getFrontendDir, getSourceDir, host, isAllowedLocalOrigin, isDemoMode, isDev, isLocalMode, port, start, tabDir } from "./util.ts";
 import * as path from "@std/path";
 import { supportedAudioFormatList, supportedFormatList } from "./common.ts";
 import {
@@ -70,9 +70,10 @@ export async function main() {
     // Read index.html content
     const indexHTMLContent = await Deno.readTextFile(path.join(frontendDir, "index.html"));
 
-    // Inject demo mode flag using cheerio
+    // Share the runtime mode with the browser and local import tools.
+    const appConfig = { isDemo: isDemoMode, isLocalMode };
     const $ = cheerio.load(indexHTMLContent);
-    $("head").append(`<script id="app-config" type="application/json">${JSON.stringify({ isDemo: isDemoMode })}</script>`);
+    $("head").append(`<script id="app-config" type="application/json">${JSON.stringify(appConfig)}</script>`);
     const indexHTML = $.html();
 
     if (isDemoMode) {
@@ -120,10 +121,24 @@ export async function main() {
         );
     }
 
+    if (isLocalMode) {
+        app.use("/api/*", async (c, next) => {
+            if (!isAllowedLocalOrigin(c.req.header("Origin") ?? null)) {
+                return c.json({ ok: false, msg: "Local app origin required" }, 403);
+            }
+            await next();
+        });
+    }
+
     // Better-Auth routes
     app.all("/api/auth/*", (c) => {
+        if (isLocalMode) {
+            return c.json({ error: "Accounts are disabled in local mode" }, 404);
+        }
         return auth.handler(c.req.raw);
     });
+
+    app.get("/api/app-config", (c) => c.json(appConfig));
 
     // Is Disable Sign Up
     app.get("/api/is-finish-setup", (c) => {
@@ -133,6 +148,9 @@ export async function main() {
     // Register Admin account
     app.post("/register", async (c) => {
         try {
+            if (isLocalMode) {
+                return c.json({ error: "Accounts are disabled in local mode" }, 404);
+            }
             if (hasUser()) {
                 return c.json({ error: "User already exists" }, 400);
             }

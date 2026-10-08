@@ -7,6 +7,7 @@ async function setupTest() {
     const tempDir = await Deno.makeTempDir();
     Deno.env.set("DATA_DIR", tempDir);
     Deno.env.set("MYTABS_PORT", "47778");
+    Deno.env.set("MYTABS_LOCAL_MODE", "false");
     return tempDir;
 }
 

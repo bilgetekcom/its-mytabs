@@ -8,6 +8,7 @@ $mytabsInstanceFile = Join-Path $mytabsData 'sunucu.json'
 New-Item -ItemType Directory -Path $mytabsData -Force | Out-Null
 $env:DATA_DIR = $mytabsData
 $env:MYTABS_HOST = '127.0.0.1'
+$env:MYTABS_LOCAL_MODE = 'true'
 $env:MYTABS_PORT = '47777'
 $env:MYTABS_LAUNCH_BROWSER = 'false'
 

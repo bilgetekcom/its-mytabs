@@ -1,10 +1,14 @@
 import { Server, ServerOptions, Socket } from "socket.io";
 import { ServerType } from "@hono/node-server";
-import { devOriginList, isDev } from "./util.ts";
+import { devOriginList, isAllowedLocalOrigin, isDev, isLocalMode } from "./util.ts";
 import { auth } from "./auth.ts";
 
 export function socketIO(httpServer: ServerType) {
     const config: Partial<ServerOptions> = {};
+
+    if (isLocalMode) {
+        config.allowRequest = (request, callback) => callback(null, isAllowedLocalOrigin(request.headers.origin ?? null));
+    }
 
     if (isDev()) {
         config["cors"] = {
@@ -25,7 +29,9 @@ export function socketIO(httpServer: ServerType) {
         let session;
 
         // Get Auth Session
-        if (clientType === "tabPlayer") {
+        if (isLocalMode) {
+            session = clientType === "tabPlayer" || clientType === "controller";
+        } else if (clientType === "tabPlayer") {
             const context = {
                 headers: new Headers(),
             };
